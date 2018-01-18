@@ -1,39 +1,60 @@
 
-#
-# Build configuration for Circle CI
-#
+version: 2.0
 
-general:
-    artifacts:
-        - /home/ubuntu/UnitTestWithCircleCI/app/build/outputs/apk/
-general:
-     branches:
-        only:
-          - master # list of branches to ignore
+cache_key: &cache_key
+  key: jars-{{ checksum "build.gradle" }}-{{ checksum "gradle/wrapper/gradle-wrapper.properties" }}
 
+jobs:
+  build:
+    working_directory: ~/SdkSearch
 
-machine:
+    docker:
+      - image: circleci/android:api-27-alpha
+
     environment:
-        ANDROID_HOME: /usr/local/android-sdk-linux
+      TERM: dumb
 
-dependencies:
-    override:
-        - echo y | android update sdk --no-ui --all --filter tools,platform-tools,build-tools-25.0.2,android-25,extra-google-m2repository,extra-android-m2repository,extra-google-google_play_services,extra-android-support
-        - chmod +x gradlew
-        - ANDROID_HOME=/usr/local/android-sdk-linux ./gradlew dependencies --console=plain
+    steps:
+      - checkout
 
-test:
-    override:
-        - (./gradlew assemble):
-            timeout: 360
- # start the emulator
-        - emulator -avd circleci-android22 -no-audio -no-window:
-            background: true
-            parallel: true
-        # wait for it to have booted
-        - circle-android wait-for-boot
-        # unlock the emulator screen
-        - sleep 30
-        - adb shell input keyevent 82
-        # copy the build outputs to artifacts
-- cp -r app/build/outputs $CIRCLE_ARTIFACTS
+      - restore_cache:
+          <<: *cache_key
+
+      - run:
+          name: Assemble
+          command: ./gradlew assemble
+      - store_artifacts:
+          path: frontend/android/build/outputs/
+      - store_artifacts:
+          path: frontend/chrome-extension/build/distributions/
+      - store_artifacts:
+          path: build/commit-timestamp.txt
+
+      - run:
+          name: Test
+          command: |
+            ./gradlew test
+            mkdir -p ~/junit/
+            find . -type f -regex ".*/build/test-results/.*xml" -exec cp --parents {} ~/junit/ \;
+      - store_test_results:
+          path: ~/junit
+      - store_artifacts:
+          path: ~/junit
+
+      - run:
+          name: Android Lint
+          command: ./gradlew :frontend:android:lint
+      - store_artifacts:
+          path: frontend/android/build/reports/lint-results.html
+
+      - save_cache:
+          <<: *cache_key
+          paths:
+            - ~/.gradle/caches
+            - ~/.gradle/wrapper
+
+workflows:
+  version: 2
+  build_and_test:
+    jobs:
+- build
